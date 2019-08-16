@@ -375,6 +375,9 @@ private struct ChildScrollViewInfo {
     /// you can match the opacity with your custom views.
     public private(set) var currentChildOpacity: CGFloat = 1.0
 
+    /// If set, overlay view is shown below the drawer when it's fully opened.
+    public var shouldShowOverlay = false
+
     // MARK: - Initialization
 
     init() {
@@ -1043,6 +1046,11 @@ private struct ChildScrollViewInfo {
     private func setOverlayOpacity(forScrollPosition position: CGFloat) {
         guard let superview = self.superview else {
             log("ERROR: Could not set up overlay.")
+            return
+        }
+
+        guard shouldShowOverlay else {
+            self.overlay?.alpha = 0
             return
         }
 
