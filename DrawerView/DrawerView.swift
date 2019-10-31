@@ -298,6 +298,7 @@ private struct ChildScrollViewInfo {
     ///
     /// - parameter view The view to attach to.
     public func attachTo(view: UIView) {
+        panGestureRecognizer.addTarget(self, action: #selector(handlePan(_:)))
 
         if self.superview == nil {
             self.translatesAutoresizingMaskIntoConstraints = false
@@ -415,7 +416,6 @@ private struct ChildScrollViewInfo {
         self.init(embeddedView: view)
 
         view.frame = self.bounds
-        view.backgroundColor = .clear
         view.translatesAutoresizingMaskIntoConstraints = false
         self.addSubview(view)
 
@@ -444,12 +444,11 @@ private struct ChildScrollViewInfo {
             object: nil)
         #endif
 
-        panGestureRecognizer = DrawerViewPanGestureRecognizer(target: self, action: #selector(handlePan))
-        panGestureRecognizer.maximumNumberOfTouches = 2
+        panGestureRecognizer = DrawerViewPanGestureRecognizer()
+        panGestureRecognizer.maximumNumberOfTouches = 1
         panGestureRecognizer.minimumNumberOfTouches = 1
         panGestureRecognizer.delegate = self
         self.addGestureRecognizer(panGestureRecognizer)
-
         self.translatesAutoresizingMaskIntoConstraints = false
 
         setupBackgroundView()
@@ -1233,7 +1232,7 @@ extension DrawerView: UIGestureRecognizerDelegate {
 
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
 
-        if gestureRecognizer === self.panGestureRecognizer {
+        if gestureRecognizer !== self.panGestureRecognizer {
             if otherGestureRecognizer.view is UIScrollView {
                 // If the gesture recognizer is from a scroll view, do not fail as
                 // we need to work in parallel
@@ -1245,7 +1244,7 @@ extension DrawerView: UIGestureRecognizerDelegate {
             }
         }
 
-        return true
+        return false
     }
 
 }
