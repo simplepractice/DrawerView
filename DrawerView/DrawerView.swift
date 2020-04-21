@@ -27,6 +27,13 @@ let dateFormatter: DateFormatter = {
     case open = 3
 }
 
+@objc public enum DrawerOrientation: Int {
+    case bottom = 0
+    case left = 1
+    case right = 2
+    case top = 3
+}
+
 extension DrawerPosition: CustomStringConvertible {
 
     public var description: String {
@@ -60,14 +67,13 @@ public class DrawerViewPanGestureRecognizer: UIPanGestureRecognizer {
 
 let kVelocityTreshold: CGFloat = 0
 
-// Vertical leeway is used to cover the bottom with springy animations.
-let kVerticalLeeway: CGFloat = 10.0
-
 let kDefaultCornerRadius: CGFloat = 9.0
 
 let kDefaultShadowRadius: CGFloat = 1.0
 
 let kDefaultShadowOpacity: Float = 0.05
+
+let kLeeway: CGFloat = 10
 
 let kDefaultBackgroundEffect = UIBlurEffect(style: .extraLight)
 
@@ -134,7 +140,7 @@ private struct ChildScrollViewInfo {
 
     private var panOrigin: CGFloat = 0.0
 
-    private var horizontalPanOnly: Bool = true
+    private var singleDimensionPanOnly: Bool = true
 
     private var startedDragging: Bool = false
 
@@ -143,6 +149,14 @@ private struct ChildScrollViewInfo {
     private var currentPosition: DrawerPosition = .collapsed
 
     private var topConstraint: NSLayoutConstraint? = nil
+
+    private var bottomConstraint: NSLayoutConstraint? = nil
+
+    private var leadingConstraint: NSLayoutConstraint? = nil
+
+    private var trailingConstraint: NSLayoutConstraint? = nil
+
+    private var widthConstraint: NSLayoutConstraint? = nil
 
     private var heightConstraint: NSLayoutConstraint? = nil
 
@@ -165,6 +179,66 @@ private struct ChildScrollViewInfo {
     private let embeddedView: UIView?
 
     private var hiddenChildViews: [UIView]?
+
+    private var orientation: DrawerOrientation = .bottom
+
+    private var isDirectOrientation: Bool {
+        switch orientation {
+        case .bottom, .right:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var isOrientedVertically: Bool {
+        switch orientation {
+        case .bottom, .top:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var marginConstraint: NSLayoutConstraint? {
+        switch orientation {
+        case .bottom:
+            return topConstraint
+        case .left:
+            return trailingConstraint
+        case .right:
+            return leadingConstraint
+        case .top:
+            return bottomConstraint
+        }
+    }
+
+    private var superviewLength: CGFloat {
+        switch orientation {
+        case .bottom, .top:
+            return superview?.bounds.height ?? 0
+        case .left, .right:
+            return superview?.bounds.width ?? 0
+        }
+    }
+
+    private var length: CGFloat {
+        switch orientation {
+        case .bottom, .top:
+            return superview?.bounds.height ?? 0 - variableMargin
+        case .left, .right:
+            return superview?.bounds.width ?? 0 - variableMargin
+        }
+    }
+
+    private var sizeConstraint: NSLayoutConstraint? {
+        switch orientation {
+        case .bottom, .top:
+            return heightConstraint
+        case .left, .right:
+            return widthConstraint
+        }
+    }
 
     // MARK: - Visual properties
 
@@ -307,43 +381,100 @@ private struct ChildScrollViewInfo {
             log("Invalid state; superview already set when called attachTo(view:)")
         }
 
-        topConstraint = self.topAnchor.constraint(equalTo: view.topAnchor, constant: self.topMargin)
-        heightConstraint = self.heightAnchor.constraint(greaterThanOrEqualTo: view.heightAnchor, multiplier: 1, constant: -self.topSpace)
-        let bottomConstraint = self.bottomAnchor.constraint(greaterThanOrEqualTo: view.bottomAnchor)
-
-        let constraints = [
-            self.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            self.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topConstraint,
-            heightConstraint,
-            bottomConstraint
-        ]
-
-        for constraint in constraints {
-            constraint?.isActive = true
-        }
+        addConstraints(to: view, for: orientation)
 
         updateVisuals()
     }
 
+    private func addConstraints(to drawer: UIView, for orientation: DrawerOrientation) {
+        guard let view = superview else { return }
+
+        var constraints = [NSLayoutConstraint]()
+
+        let setupDefaultLeadingAndTrailingConstraints = { [unowned self] in
+            constraints.append(self.leadingAnchor.constraint(equalTo: view.leadingAnchor))
+            self.leadingConstraint = constraints.last
+            constraints.append(self.trailingAnchor.constraint(equalTo: view.trailingAnchor))
+            self.trailingConstraint = constraints.last
+        }
+
+        let setupDefaultTopAndBottomConstraints = { [unowned self] in
+            constraints.append(self.topAnchor.constraint(equalTo: view.topAnchor))
+            self.topConstraint = constraints.last
+            constraints.append(self.bottomAnchor.constraint(equalTo: view.bottomAnchor))
+            self.bottomConstraint = constraints.last
+        }
+
+        switch orientation {
+        case .bottom:
+            constraints.append(topAnchor.constraint(equalTo: view.topAnchor, constant: length))
+            topConstraint = constraints.last
+
+            constraints.append(bottomAnchor.constraint(greaterThanOrEqualTo: view.bottomAnchor))
+            bottomConstraint = constraints.last
+
+            setupDefaultLeadingAndTrailingConstraints()
+
+            constraints.append(heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 1, constant: -variableMargin))
+            heightConstraint = constraints.last
+        case .top:
+            constraints.append(bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -length))
+            bottomConstraint = constraints.last
+
+            constraints.append(topAnchor.constraint(lessThanOrEqualTo: view.topAnchor))
+            topConstraint = constraints.last
+
+            setupDefaultLeadingAndTrailingConstraints()
+
+            constraints.append(heightAnchor.constraint(equalTo: view.heightAnchor, constant: -variableMargin))
+            heightConstraint = constraints.last
+        case .left:
+            constraints.append(trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -length))
+            trailingConstraint = constraints.last
+
+            constraints.append(leadingAnchor.constraint(lessThanOrEqualTo: view.leadingAnchor))
+            leadingConstraint = constraints.last
+
+            setupDefaultTopAndBottomConstraints()
+
+            constraints.append(view.widthAnchor.constraint(equalTo: widthAnchor, constant: -variableMargin))
+            widthConstraint = constraints.last
+        case .right:
+            constraints.append(leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: variableMargin))
+            leadingConstraint = constraints.last
+
+            constraints.append(trailingAnchor.constraint(greaterThanOrEqualTo: view.trailingAnchor))
+            trailingConstraint = constraints.last
+
+            setupDefaultTopAndBottomConstraints()
+
+            constraints.append(widthAnchor.constraint(greaterThanOrEqualTo: view.widthAnchor, multiplier: 1, constant: -variableMargin))
+            widthConstraint = constraints.last
+        }
+        sizeConstraint?.priority = UILayoutPriority(999)
+        for constraint in constraints {
+            constraint.isActive = true
+        }
+    }
+
     // TODO: Use size classes with the positions.
 
-    /// The top margin for the drawer when it is at its full height.
-    public var topMargin: CGFloat = 68.0 {
+    /// The appropriate variable margin for the drawer when it is at its full height.
+    public var variableMargin: CGFloat = 68.0 {
         didSet {
             self.updateSnapPosition(animated: false)
         }
     }
 
-    /// The height of the drawer when collapsed.
-    public var collapsedHeight: CGFloat = 68.0 {
+    /// The height or width of the drawer when collapsed.
+    public var collapsedDimension: CGFloat = 68.0 {
         didSet {
             self.updateSnapPosition(animated: false)
         }
     }
 
-    /// The height of the drawer when partially open.
-    public var partiallyOpenHeight: CGFloat = 264.0 {
+    /// The height or width of the drawer when partially open.
+    public var partiallyOpenDimension: CGFloat = 264.0 {
         didSet {
             self.updateSnapPosition(animated: false)
         }
@@ -368,7 +499,7 @@ private struct ChildScrollViewInfo {
                 // Current position is not in the given list, default to the most closed one.
                 self.setInitialPosition()
             }
-            self.heightConstraint?.constant = -self.topSpace
+            self.sizeConstraint?.constant = -variableMargin
         }
     }
 
@@ -387,7 +518,8 @@ private struct ChildScrollViewInfo {
         self.setup()
     }
 
-    private init(embeddedView: UIView?) {
+    private init(embeddedView: UIView?, orientation: DrawerOrientation) {
+        self.orientation = orientation
         self.embeddedView = embeddedView
         super.init(frame: CGRect())
         self.setup()
@@ -412,8 +544,8 @@ private struct ChildScrollViewInfo {
     /// Initialize the drawer with contents of the given view. The
     /// provided view is added as a child view for the drawer and
     /// constrained with auto layout from all of its sides.
-    convenience public init(withView view: UIView) {
-        self.init(embeddedView: view)
+    convenience public init(withView view: UIView, orientation: DrawerOrientation) {
+        self.init(embeddedView: view, orientation: orientation)
 
         view.frame = self.bounds
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -463,18 +595,7 @@ private struct ChildScrollViewInfo {
         backgroundView.clipsToBounds = true
 
         self.insertSubview(backgroundView, at: 0)
-
-        let backgroundViewConstraints = [
-            backgroundView.leadingAnchor.constraint(equalTo: self.leadingAnchor),
-            backgroundView.trailingAnchor.constraint(equalTo: self.trailingAnchor),
-            backgroundView.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: kVerticalLeeway),
-            backgroundView.topAnchor.constraint(equalTo: self.topAnchor)
-        ]
-
-        for constraint in backgroundViewConstraints {
-            constraint.isActive = true
-        }
-
+        addBackgroundConstraints(view: backgroundView, defaultOffset: 0)
         self.backgroundColor = UIColor.clear
     }
 
@@ -486,17 +607,48 @@ private struct ChildScrollViewInfo {
         borderView.layer.cornerRadius = 10
 
         self.addSubview(borderView)
+        addBackgroundConstraints(view: borderView, defaultOffset: 0.5)
+    }
 
-        let borderViewConstraints = [
-            borderView.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: -0.5),
-            borderView.trailingAnchor.constraint(equalTo: self.trailingAnchor, constant: 0.5),
-            borderView.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: kVerticalLeeway),
-            borderView.topAnchor.constraint(equalTo: self.topAnchor, constant: -0.5)
-        ]
+    @discardableResult
+    private func addBackgroundConstraints(view: UIView, defaultOffset: CGFloat = 0, leewayOffset: CGFloat = 10) -> [NSLayoutConstraint] {
+        let constraints: [NSLayoutConstraint]
+        switch orientation {
+        case .bottom:
+            constraints = [
+                view.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: -defaultOffset),
+                view.trailingAnchor.constraint(equalTo: self.trailingAnchor, constant: defaultOffset),
+                view.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: leewayOffset),
+                view.topAnchor.constraint(equalTo: self.topAnchor, constant: -defaultOffset)
+            ]
+        case .top:
+            constraints = [
+                view.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: -defaultOffset),
+                view.trailingAnchor.constraint(equalTo: self.trailingAnchor, constant: defaultOffset),
+                view.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: defaultOffset),
+                view.topAnchor.constraint(equalTo: self.topAnchor, constant: -leewayOffset)
+            ]
+        case .left:
+            constraints = [
+                view.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: -defaultOffset),
+                view.trailingAnchor.constraint(equalTo: self.trailingAnchor, constant: leewayOffset),
+                view.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: defaultOffset),
+                view.topAnchor.constraint(equalTo: self.topAnchor, constant: -defaultOffset)
+            ]
+        case .right:
+            constraints = [
+                view.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: -leewayOffset),
+                view.trailingAnchor.constraint(equalTo: self.trailingAnchor, constant: defaultOffset),
+                view.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: defaultOffset),
+                view.topAnchor.constraint(equalTo: self.topAnchor, constant: -defaultOffset)
+            ]
+        }
 
-        for constraint in borderViewConstraints {
+        for constraint in constraints {
             constraint.isActive = true
         }
+
+        return constraints
     }
 
     // MARK: - View methods
@@ -584,7 +736,7 @@ private struct ChildScrollViewInfo {
                     // seemded that the option didn't work as expected, so we need to do this
                     // here manually.
                     if let f = self.layer.presentation()?.frame {
-                        self.setScrollPosition(f.minY, notifyDelegate: false)
+                        self.setScrollPosition((self.isOrientedVertically ? f.minY : f.minX), notifyDelegate: false)
                     }
                 }
 
@@ -634,7 +786,11 @@ private struct ChildScrollViewInfo {
     }
 
     private func setScrollPosition(_ scrollPosition: CGFloat, notifyDelegate: Bool) {
-        self.topConstraint?.constant = scrollPosition
+        if isDirectOrientation {
+            self.marginConstraint?.constant = scrollPosition
+        } else {
+            self.marginConstraint?.constant = -scrollPosition
+        }
         self.setOverlayOpacity(forScrollPosition: scrollPosition)
         self.setShadowOpacity(forScrollPosition: scrollPosition)
         self.setChildrenOpacity(forScrollPosition: scrollPosition)
@@ -665,18 +821,23 @@ private struct ChildScrollViewInfo {
 
             // Get the actual position of the view.
             let frame = self.layer.presentation()?.frame ?? self.frame
-            self.panOrigin = frame.origin.y
-            self.horizontalPanOnly = true
-
+            switch orientation {
+            case .bottom, .right:
+                panOrigin = isOrientedVertically ? frame.origin.y : frame.origin.x
+            default:
+                panOrigin = isOrientedVertically ? superviewLength - frame.maxY : superviewLength - frame.maxX
+            }
+            self.singleDimensionPanOnly = true
             updateScrollPosition(whileDraggingAtPoint: panOrigin, notifyDelegate: true)
 
         case .changed:
 
             let translation = sender.translation(in: self)
             let velocity = sender.velocity(in: self)
-            if velocity.y == 0 {
-                break
-            }
+
+            let dimensionalVelocity = isOrientedVertically ? velocity.y : velocity.x
+
+            guard dimensionalVelocity != 0 else { break }
 
             // If scrolling upwards a scroll view, ignore the events.
             if self.childScrollViews.count > 0 {
@@ -693,27 +854,29 @@ private struct ChildScrollViewInfo {
                     .filter { $0.pan.isActive() }
 
                 // TODO: Better support for scroll views that don't have directional scroll lock enabled.
-                let ableToDetermineHorizontalPan =
+                let ableToDetermineOppositePan =
                     simultaneousPanGestures.count > 0 && simultaneousPanGestures
-                        .allSatisfy { self.ableToDetermineHorizontalPan($0.scrollView) }
+                        .allSatisfy { self.ableToDetermineOppositeDirectionPan($0.scrollView) }
 
-                if simultaneousPanGestures.count > 0 && !ableToDetermineHorizontalPan && shouldWarn(&lastWarningDate) {
+                if simultaneousPanGestures.count > 0 && !ableToDetermineOppositePan && shouldWarn(&lastWarningDate) {
                     NSLog("WARNING (DrawerView): One subview of DrawerView has not enabled directional lock. Without directional lock it is ambiguous to determine if DrawerView should start panning.")
                 }
 
-                if ableToDetermineHorizontalPan {
-                    let panningVertically = simultaneousPanGestures.count > 0
+                if ableToDetermineOppositePan {
+                    let isDirectPan = simultaneousPanGestures.count > 0
                         && simultaneousPanGestures
                             .allSatisfy {
                                 let pan = $0.pan.translation(in: self)
-                                return !(pan.x != 0 && pan.y == 0)
+                                let isVertical = !(pan.x != 0 && pan.y == 0)
+                                let isHorizontal = !(pan.y != 0 && pan.x == 0)
+                                return self.isOrientedVertically ? isVertical : isHorizontal
                     }
 
-                    if panningVertically {
-                        self.horizontalPanOnly = false
+                    if isDirectPan {
+                        self.singleDimensionPanOnly = false
                     }
 
-                    if self.horizontalPanOnly {
+                    if self.singleDimensionPanOnly {
                         log("Vertical pan cancelled due to direction lock")
                         break
                     }
@@ -723,17 +886,20 @@ private struct ChildScrollViewInfo {
                 let activeScrollViews = simultaneousPanGestures
                     .compactMap { $0.pan.view as? UIScrollView }
 
-                let childReachedTheTop = activeScrollViews.contains { $0.contentOffset.y <= 0 }
+                let childReachedTheLimit = activeScrollViews.contains {
+                    self.isOrientedVertically ? $0.contentOffset.y <= 0 : $0.contentOffset.x <= 0
+                }
+
                 let childScrollEnabled = activeScrollViews.contains { $0.isScrollEnabled }
 
-                let scrollingToBottom = velocity.y < 0
+                let scrollingToBottom = dimensionalVelocity < 0
 
                 let shouldScrollChildView: Bool
                 if !childScrollEnabled {
                     shouldScrollChildView = false
-                } else if !childReachedTheTop && !scrollingToBottom {
+                } else if !childReachedTheLimit && !scrollingToBottom {
                     shouldScrollChildView = true
-                } else if childReachedTheTop && !scrollingToBottom {
+                } else if childReachedTheLimit && !scrollingToBottom {
                     shouldScrollChildView = false
                 } else if !isFullyExpanded {
                     shouldScrollChildView = false
@@ -751,12 +917,16 @@ private struct ChildScrollViewInfo {
                     // Scrolling downwards and content was consumed, so disable
                     // child scrolling and catch up with the offset.
                     let frame = self.layer.presentation()?.frame ?? self.frame
-                    let minContentOffset = activeScrollViews.map { $0.contentOffset.y }.min() ?? 0
+                    let minContentOffset = activeScrollViews.map {
+                        self.isOrientedVertically ? $0.contentOffset.y : $0.contentOffset.x
+                    }.min() ?? 0
+
+                    let baseOrigin = self.isOrientedVertically ? frame.origin.y : frame.origin.x
 
                     if minContentOffset < 0 {
-                        self.panOrigin = frame.origin.y - minContentOffset
+                        self.panOrigin = baseOrigin - minContentOffset
                     } else {
-                        self.panOrigin = frame.origin.y
+                        self.panOrigin = baseOrigin
                     }
 
                     // Also animate to the proper scroll position.
@@ -778,12 +948,18 @@ private struct ChildScrollViewInfo {
                 } else if !shouldScrollChildView {
                     // Scroll only if we're not scrolling the subviews.
                     startedDragging = true
-                    let pos = panOrigin + translation.y
+                    let pos = panOrigin + (isOrientedVertically ? translation.y : translation.x)
                     updateScrollPosition(whileDraggingAtPoint: pos, notifyDelegate: true)
                 }
             } else {
                 startedDragging = true
-                let pos = panOrigin + translation.y
+                let pos: CGFloat
+                switch orientation {
+                case .bottom, .right:
+                    pos = panOrigin + (isOrientedVertically ? translation.y : translation.x)
+                default:
+                    pos = panOrigin - (isOrientedVertically ? translation.y : translation.x)
+                }
                 updateScrollPosition(whileDraggingAtPoint: pos, notifyDelegate: true)
             }
 
@@ -792,14 +968,17 @@ private struct ChildScrollViewInfo {
             fallthrough
         case .ended:
             let velocity = sender.velocity(in: self)
-            log("Ending with vertical velocity \(velocity.y)")
+            log("Ending with vertical velocity \(isOrientedVertically ? velocity.y : velocity.x)")
 
             let activeScrollViews = self.childScrollViews.filter { sv in
                 sv.scrollView.isScrollEnabled &&
                     sv.scrollView.gestureRecognizers?.contains { $0.isActive() } ?? false
             }
 
-            if activeScrollViews.contains(where: { $0.scrollView.contentOffset.y > 0 }) {
+            if activeScrollViews.contains(where: {
+                let offsetPoint = $0.scrollView.contentOffset
+                let offsetValue = isOrientedVertically ? offsetPoint.y : offsetPoint.x
+                return offsetValue > 0 }) {
                 // Let it scroll.
                 log("Let child view scroll.")
             } else if startedDragging {
@@ -809,14 +988,25 @@ private struct ChildScrollViewInfo {
                 // 1) A treshold for velocity that makes drawer slide to the next state
                 // 2) A prediction that estimates the next position based on target offset.
                 // If 2 doesn't evaluate to the current position, use that.
-                let targetOffset = self.frame.origin.y + velocity.y / 100
+
+                let targetOffset: CGFloat
+                let advancement: Int
+                if isOrientedVertically {
+                    let base = isDirectOrientation ? frame.origin.y : superviewLength - frame.maxY
+                    targetOffset = base + velocity.y / 100
+                    advancement = velocity.y < 0 ? -1 : 1
+                } else {
+                    let base = isDirectOrientation ? frame.origin.x : superviewLength - frame.maxX
+                    targetOffset = base + velocity.x / 100
+                    advancement = velocity.x < 0 ? -1 : 1
+                }
                 let targetPosition = positionFor(offset: targetOffset)
 
                 // The positions are reversed, reverse the sign.
-                let advancement = velocity.y > 0 ? -1 : 1
 
                 let nextPosition: DrawerPosition
-                if targetPosition == self.position && abs(velocity.y) > kVelocityTreshold,
+                let absVelocity = abs(isOrientedVertically ? velocity.y : velocity.x)
+                if targetPosition == self.position && absVelocity > kVelocityTreshold,
                     let advanced = self.snapPositionsDescending.advance(from: targetPosition, offset: advancement) {
                     nextPosition = advanced
                 } else {
@@ -863,43 +1053,70 @@ private struct ChildScrollViewInfo {
             }
     }
 
-    private var bottomInset: CGFloat {
-        let bottomInset: CGFloat
+    private var inset: CGFloat {
+        let result: CGFloat
         switch insetAdjustmentBehavior {
         case .automatic:
-            // Evaluate how much of superview is behind the window safe area.
-            if #available(iOS 11.0, *), let window = self.window, let superview = superview {
-                let bounds = superview.convert(superview.bounds, to: window)
-                bottomInset = max(0, window.safeAreaInsets.bottom - (window.bounds.maxY - bounds.maxY))
-            } else {
-                bottomInset = 0
-            }
+            return automaticInset
         case .superviewSafeArea:
-            if #available(iOS 11.0, *) {
-                bottomInset = superview?.safeAreaInsets.bottom ?? 0
-            } else {
-                bottomInset = 0
-            }
+            return superviewSafeAreaInset
         case .fixed(let inset):
-            bottomInset = inset
+            result = inset
         case .never:
-            bottomInset = 0
+            result = 0
         }
-        return bottomInset
+        return result
+    }
+
+    private var superviewSafeAreaInset: CGFloat {
+        guard #available(iOS 11.0, *) else { return 0 }
+        switch orientation {
+        case .bottom:
+            return superview?.safeAreaInsets.bottom ?? 0
+        case .top:
+            return superview?.safeAreaInsets.top ?? 0
+        case .left:
+            return superview?.safeAreaInsets.left ?? 0
+        case .right:
+            return superview?.safeAreaInsets.right ?? 0
+        }
+    }
+
+    private var automaticInset: CGFloat {
+        guard #available(iOS 11.0, *), let window = self.window, let superview = superview else { return 0 }
+        let bounds = superview.convert(superview.bounds, to: window)
+        switch orientation {
+        case .bottom:
+            return max(0, window.safeAreaInsets.bottom - (window.bounds.maxY - bounds.maxY))
+        case .top:
+            return max(0, window.safeAreaInsets.top - (window.bounds.minY - bounds.minY))
+        case .left:
+            return max(0, window.safeAreaInsets.left - (window.bounds.minX - bounds.minX))
+        case .right:
+            return max(0, window.safeAreaInsets.right - (window.bounds.maxX - bounds.maxX))
+        }
     }
 
     fileprivate func snapPosition(for position: DrawerPosition, inSuperView superview: UIView) -> CGFloat {
+        let base: CGFloat
+        switch orientation {
+        case .right, .bottom:
+            base = isOrientedVertically ? superview.bounds.height : superview.bounds.width
+        default:
+            base = isOrientedVertically ? superview.bounds.height : superview.bounds.width
+        }
+
         switch position {
         case .open:
-            return self.topMargin
+            return base - inset - self.variableMargin
         case .partiallyOpen:
-            return superview.bounds.height - bottomInset - self.partiallyOpenHeight
+            return base - inset - self.partiallyOpenDimension
         case .collapsed:
-            return superview.bounds.height - bottomInset - self.collapsedHeight
+            return base - inset - self.collapsedDimension
         case .closed:
             // When closed, the safe area is ignored since the
             // drawer should not be visible.
-            return superview.bounds.height
+            return base
         }
     }
 
@@ -949,7 +1166,7 @@ private struct ChildScrollViewInfo {
         updateBorderVisuals(self.borderView)
         updateOverlayVisuals(self.overlay)
         updateBackgroundVisuals(self.backgroundView)
-        heightConstraint?.constant = -self.topSpace
+        sizeConstraint?.constant = -variableMargin
 
         self.setNeedsDisplay()
     }
@@ -976,13 +1193,37 @@ private struct ChildScrollViewInfo {
         backgroundView.effect = self.backgroundEffect
         if #available(iOS 11.0, *) {
             backgroundView.layer.cornerRadius = self.cornerRadius
-            backgroundView.layer.maskedCorners = [.layerMaxXMinYCorner, .layerMinXMinYCorner]
+            switch orientation {
+            case .left:
+                backgroundView.layer.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+            case .right:
+                backgroundView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+            case .bottom:
+                backgroundView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+            case .top:
+                backgroundView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+            }
         } else {
             // Fallback on earlier versions
             let mask: CAShapeLayer = {
                 let m = CAShapeLayer()
-                let frame = backgroundView.bounds.insetBy(top: 0, bottom: -kVerticalLeeway, left: 0, right: 0)
-                let path = UIBezierPath(roundedRect: frame, byRoundingCorners: [.topLeft, .topRight], cornerRadii: CGSize(width: self.cornerRadius, height: self.cornerRadius))
+                let frame: CGRect
+                let corners: UIRectCorner
+                switch orientation {
+                    case .left:
+                        frame = backgroundView.bounds.insetBy(top: 0, bottom: 0, left: -kLeeway, right: 0)
+                        corners = [.topRight, .bottomRight]
+                    case .right:
+                        frame = backgroundView.bounds.insetBy(top: 0, bottom: 0, left: 0, right: -kLeeway)
+                        corners = [.topLeft, .bottomLeft]
+                    case .bottom:
+                        frame = backgroundView.bounds.insetBy(top: 0, bottom: -kLeeway, left: 0, right: 0)
+                        corners = [.topLeft, .topRight]
+                    case .top:
+                        frame = backgroundView.bounds.insetBy(top: -kLeeway, bottom: 0, left: 0, right: 0)
+                        corners = [.bottomLeft, .bottomRight]
+                }
+                let path = UIBezierPath(roundedRect: frame, byRoundingCorners: corners, cornerRadii: CGSize(width: self.cornerRadius, height: self.cornerRadius))
                 m.path = path.cgPath
                 return m
             }()
@@ -990,23 +1231,37 @@ private struct ChildScrollViewInfo {
         }
     }
 
+    private func int(for bool: Bool) -> Int {
+        return 50
+    }
+
     public override func safeAreaInsetsDidChange() {
         if automaticallyAdjustChildContentInset {
-            let bottomInset = self.bottomInset
-            self.adjustChildContentInset(self, bottomInset: bottomInset)
+            let inset = self.inset
+            self.adjustChildContentInset(self, inset: inset)
         }
     }
 
-    private func adjustChildContentInset(_ view: UIView, bottomInset: CGFloat) {
+    private func adjustChildContentInset(_ view: UIView, inset: CGFloat) {
         for childView in view.subviews {
             if let scrollView = childView as? UIScrollView {
                 // Do not recurse into child views if content
                 // inset can be set on the superview.
                 let convertedBounds = scrollView.convert(scrollView.bounds, to: self)
-                let distanceFromBottom = self.bounds.height - convertedBounds.maxY
-                scrollView.contentInset.bottom = max(bottomInset - distanceFromBottom, 0)
+                let distanceFromBase: CGFloat
+                switch orientation {
+                case .bottom:
+                    distanceFromBase = self.bounds.height - convertedBounds.maxY
+                case .top:
+                    distanceFromBase = self.bounds.height - convertedBounds.minY
+                case .right:
+                    distanceFromBase = self.bounds.width - convertedBounds.maxX
+                case .left:
+                    distanceFromBase = self.bounds.width - convertedBounds.minX
+                }
+                scrollView.contentInset.bottom = max(inset - distanceFromBase, 0)
             } else {
-                adjustChildContentInset(childView, bottomInset: bottomInset)
+                adjustChildContentInset(childView, inset: inset)
             }
         }
     }
@@ -1025,13 +1280,37 @@ private struct ChildScrollViewInfo {
         overlay.addGestureRecognizer(overlayTapRecognizer)
 
         superview.insertSubview(overlay, belowSubview: self)
-
-        let constraints = [
-            overlay.leadingAnchor.constraint(equalTo: superview.leadingAnchor),
-            overlay.trailingAnchor.constraint(equalTo: superview.trailingAnchor),
-            overlay.heightAnchor.constraint(equalTo: superview.heightAnchor),
-            overlay.bottomAnchor.constraint(equalTo: self.topAnchor)
-        ]
+        let constraints: [NSLayoutConstraint]
+        switch orientation {
+        case .bottom:
+            constraints = [
+                overlay.leadingAnchor.constraint(equalTo: superview.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: superview.trailingAnchor),
+                overlay.heightAnchor.constraint(equalTo: superview.heightAnchor),
+                overlay.bottomAnchor.constraint(equalTo: self.topAnchor)
+            ]
+        case .top:
+            constraints = [
+                overlay.leadingAnchor.constraint(equalTo: superview.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: superview.trailingAnchor),
+                overlay.heightAnchor.constraint(equalTo: superview.heightAnchor),
+                overlay.topAnchor.constraint(equalTo: self.bottomAnchor)
+            ]
+        case .left:
+            constraints = [
+                overlay.topAnchor.constraint(equalTo: superview.topAnchor),
+                overlay.bottomAnchor.constraint(equalTo: superview.bottomAnchor),
+                overlay.widthAnchor.constraint(equalTo: superview.widthAnchor),
+                overlay.leadingAnchor.constraint(equalTo: self.trailingAnchor)
+            ]
+        case .right:
+            constraints = [
+                overlay.topAnchor.constraint(equalTo: superview.topAnchor),
+                overlay.bottomAnchor.constraint(equalTo: superview.bottomAnchor),
+                overlay.widthAnchor.constraint(equalTo: superview.widthAnchor),
+                overlay.trailingAnchor.constraint(equalTo: self.leadingAnchor)
+            ]
+        }
 
         for constraint in constraints {
             constraint.isActive = true
@@ -1100,11 +1379,11 @@ private struct ChildScrollViewInfo {
 
         // TODO: This method doesn't take into account if a child view opacity was changed while it is hidden.
 
-        if self.bottomInset > 0 {
+        if self.inset > 0 {
 
             // Measure the distance to collapsed position.
             let snap = self.snapPosition(for: .collapsed, inSuperView: superview)
-            let alpha = min(1, (snap - position) / self.bottomInset)
+            let alpha = min(1, (snap - position) / self.inset)
 
             if alpha < 1 {
                 // Ask only once when beginning to hide child views.
@@ -1155,31 +1434,30 @@ private struct ChildScrollViewInfo {
         }
     }
 
-    private var topSpace: CGFloat {
-        let topPosition = self.snapPositions
-            .sortedBySnap(in: self, ascending: true)
-            .first?.snap
-
-        return topPosition ?? 0
-    }
-
     private var currentSnapPosition: CGFloat {
-        return self.topConstraint?.constant ?? 0
+        return self.marginConstraint?.constant ?? 0
     }
 
     private func convertScrollPositionToOffset(_ position: CGFloat) -> CGFloat {
         guard let superview = self.superview else {
             return 0
         }
-
-        return superview.bounds.height - position
+        let base = isOrientedVertically ? superview.bounds.height : superview.bounds.width
+        return base - position
     }
 
-    private func ableToDetermineHorizontalPan(_ scrollView: UIScrollView) -> Bool {
+    private func ableToDetermineOppositeDirectionPan(_ scrollView: UIScrollView) -> Bool {
         let hasDirectionalLock = (scrollView is UITableView) || scrollView.isDirectionalLockEnabled
         // If vertical scroll is not possible, or directional lock is
         // enabled, we are able to detect if view was panned horizontally.
-        return !scrollView.canScrollVertically || hasDirectionalLock
+        var scrollFlag = false
+        switch orientation {
+        case .bottom, .top:
+            scrollFlag = !scrollView.canScrollVertically
+        default:
+            scrollFlag = scrollView.canScrollVertically
+        }
+        return scrollFlag || hasDirectionalLock
     }
 
     private func shouldWarn(_ lastWarningDate: inout Date?) -> Bool {
@@ -1210,7 +1488,7 @@ extension DrawerView: UIGestureRecognizerDelegate {
         if gestureRecognizer === self.panGestureRecognizer {
             if let scrollView = otherGestureRecognizer.view as? UIScrollView {
 
-                if let index = self.childScrollViews.index(where: { $0.scrollView === scrollView }) {
+                if let index = self.childScrollViews.firstIndex(where: { $0.scrollView === scrollView }) {
                     // Existing scroll view, update it.
                     let scrollInfo = self.childScrollViews[index]
                     self.childScrollViews[index].gestureRecognizers = scrollInfo.gestureRecognizers + [otherGestureRecognizer]
@@ -1285,7 +1563,7 @@ public extension BidirectionalCollection where Element == DrawerPosition {
             return nil
         }
 
-        if let index = self.index(of: position) {
+        if let index = self.firstIndex(of: position) {
             let nextIndex = self.index(index, offsetBy: offset)
             return self.indices.contains(nextIndex) ? self[nextIndex] : nil
         } else {
@@ -1323,6 +1601,10 @@ fileprivate extension UIScrollView {
 
     var canScrollVertically: Bool {
         return self.contentSize.height > self.bounds.height
+    }
+
+    var canScrollHorizontally: Bool {
+        return self.contentSize.width > self.bounds.width
     }
 }
 
