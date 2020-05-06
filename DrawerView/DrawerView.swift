@@ -1442,7 +1442,8 @@ private struct ChildScrollViewInfo {
             return 0
         }
         let base = isOrientedVertically ? superview.bounds.height : superview.bounds.width
-        return base - position
+        let corrector: CGFloat = isDirectOrientation ? 1 : -1
+        return base - corrector * position
     }
 
     private func ableToDetermineOppositeDirectionPan(_ scrollView: UIScrollView) -> Bool {
