@@ -91,6 +91,8 @@ let kDefaultBorderColor = UIColor(white: 0.2, alpha: 0.2)
     @objc optional func drawerWillBeginDragging(_ drawerView: DrawerView)
 
     @objc optional func drawerWillEndDragging(_ drawerView: DrawerView)
+
+    @objc optional func insetForDrawerView(_ drawerView: DrawerView) -> CGFloat
 }
 
 private struct ChildScrollViewInfo {
@@ -111,13 +113,15 @@ private struct ChildScrollViewInfo {
     }
 
     public enum InsetAdjustmentBehavior: Equatable {
-        /// Evaluate the bottom inset automatically.
+        /// Evaluate the inset automatically.
         case automatic
-        /// Evaluate the bottom inset from safe area the superview.
+        /// Evaluate the inset from superview's safe area.
         case superviewSafeArea
-        /// Use a fixed value for bottom inset.
+        /// Use fixed inset.
         case fixed(CGFloat)
-        /// Don't use bottom inset.
+        /// Ask delegate for a proper inset
+        case delegateDriven
+        /// Don't use insets.
         case never
     }
 
@@ -1062,6 +1066,8 @@ private struct ChildScrollViewInfo {
             return superviewSafeAreaInset
         case .fixed(let inset):
             result = inset
+        case .delegateDriven:
+            result = delegate?.insetForDrawerView?(self) ?? 0
         case .never:
             result = 0
         }
@@ -1084,28 +1090,21 @@ private struct ChildScrollViewInfo {
 
     private var automaticInset: CGFloat {
         guard #available(iOS 11.0, *), let window = self.window, let superview = superview else { return 0 }
-        let bounds = superview.convert(superview.bounds, to: window)
+        let bounds = window.convert(superview.bounds, to: window)
         switch orientation {
         case .bottom:
             return max(0, window.safeAreaInsets.bottom - (window.bounds.maxY - bounds.maxY))
         case .top:
-            return max(0, window.safeAreaInsets.top - (window.bounds.minY - bounds.minY))
+            return max(0, window.safeAreaInsets.top - (bounds.minY - window.bounds.minY))
         case .left:
-            return max(0, window.safeAreaInsets.left - (window.bounds.minX - bounds.minX))
+            return max(0, window.safeAreaInsets.left - (bounds.minX - window.bounds.minX))
         case .right:
             return max(0, window.safeAreaInsets.right - (window.bounds.maxX - bounds.maxX))
         }
     }
 
     fileprivate func snapPosition(for position: DrawerPosition, inSuperView superview: UIView) -> CGFloat {
-        let base: CGFloat
-        switch orientation {
-        case .right, .bottom:
-            base = isOrientedVertically ? superview.bounds.height : superview.bounds.width
-        default:
-            base = isOrientedVertically ? superview.bounds.height : superview.bounds.width
-        }
-
+        let base = isOrientedVertically ? superview.bounds.height : superview.bounds.width
         switch position {
         case .open:
             return base - inset - self.variableMargin
@@ -1443,7 +1442,8 @@ private struct ChildScrollViewInfo {
             return 0
         }
         let base = isOrientedVertically ? superview.bounds.height : superview.bounds.width
-        return base - position
+        let corrector: CGFloat = isDirectOrientation ? 1 : -1
+        return base - corrector * position
     }
 
     private func ableToDetermineOppositeDirectionPan(_ scrollView: UIScrollView) -> Bool {
